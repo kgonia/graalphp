@@ -3,11 +3,11 @@ package pl.codeloom.php.b1.runtime;
 /** Logical PHP frame. Generated code names CVs and live ranges by stable index. */
 public final class B1Frame {
     B1Frame caller;
-    public final String file, function;
+    public String file, function;
     public int line;
     boolean staticCall;
     String scope;
-    private final String[] names;
+    private String[] names;
     private final B1Ref[] locals;
     private final Object[] temps;
     private static final int[] NO_SENDS = {};
@@ -32,6 +32,39 @@ public final class B1Frame {
         fast = ntemps < 0;
         locals = fast ? null : new B1Ref[names.length];
         temps = fast ? null : new Object[ntemps];
+    }
+
+    /** A pooled fast frame: the request reuses it at the same depth of its fast-call stack. */
+    static B1Frame pooled() { return new B1Frame(null, null, null, null, -1, false, false); }
+    /** Re-enters a pooled fast frame. Every field a fast call reads was reset when it last left ({@link #retire}). */
+    B1Frame reenter(B1Frame caller, String file, String function, B1Callable fn) {
+        this.caller = caller;
+        this.file = file;
+        this.function = function;
+        this.names = fn.locals;
+        strictTypes = fn.strictTypes;
+        staticCall = fn.isStatic;
+        scope = fn.scope;
+        return this;
+    }
+    /** A fast frame left its call: drop what it borrowed or owned so the pool retains no PHP value. */
+    void retire() {
+        caller = null;
+        line = 0;
+        m0 = m1 = m2 = m3 = null;
+        mirrors = null;
+        extras = null;
+        result = null;
+        closure = nextClosure = null;
+        discardedCall = null;
+        discardReturn = false;
+        internalCall = false;
+        if (outgoing.length != 0) outgoing = NO_SENDS;
+        // A finally region parks the pending throw and its exits on the frame (saveFlight, suspend).
+        pending = null;
+        suspended = null;
+        file = function = scope = null;
+        names = null;
     }
 
     // ------------------------------------------------------------------ fast frames
@@ -142,7 +175,8 @@ public final class B1Frame {
     }
     /** The variadic parameter's array of the extra arguments, as an owned CV. */
     public Object variadicFast(B1RequestContext ctx, int id) {
-        B1Array args = new B1Array(extras == null ? 0 : extras.length);
+        // One spare slot: array_unshift($args, ...) (apply_filters) then prepends without regrowing.
+        B1Array args = new B1Array(extras == null ? 0 : extras.length + 1);
         if (extras != null) for (Object extra : extras) args.append(ctx,extra);
         mirror(id, args);
         return args;
@@ -214,9 +248,16 @@ public final class B1Frame {
     }
 
     /** Read of a fast CV: its value, or null with the undefined-variable warning. */
+    // Hot helpers called from generated code stay under C2's MaxInlineSize (35 bytecode bytes) with their rare
+    // cases outlined: a large generated method exhausts its inlining budget, and a helper that is not inlined
+    // then costs a call and forces its operands into boxes.
     public static Object read(B1RequestContext ctx, Object local, B1Frame frame, int id) {
+        if (local == UNDEF || local instanceof B1Ref) return readSlow(ctx, local, frame, id);
+        return local;
+    }
+    private static Object readSlow(B1RequestContext ctx, Object local, B1Frame frame, int id) {
         if (local instanceof B1Ref ref) return ref.defined() ? ref.get() : undefined(ctx, frame, id);
-        return local != UNDEF ? local : undefined(ctx, frame, id);
+        return undefined(ctx, frame, id);
     }
     private static Object undefined(B1RequestContext ctx, B1Frame frame, int id) {
         ctx.diagnostic("Warning", "Undefined variable $" + frame.names[id]);
@@ -336,7 +377,7 @@ public final class B1Frame {
     public Object endLeave(B1RequestContext ctx, Throwable pending) {
         if (pending == null && extras == null) {
             Object returned = result;
-            result = null;
+            ctx.release(this);
             return returned;
         }
         return endLeaveSlow(ctx, pending);
@@ -346,7 +387,7 @@ public final class B1Frame {
             try { B1Object.release(ctx, extra); } catch (Throwable ex) { pending = B1Thrown.chain(ctx, ex, pending); }
         }
         Object returned = result;
-        result = null;
+        ctx.release(this);
         if (pending != null) {
             try { B1Object.release(ctx, returned); } catch (Throwable ex) { pending = B1Thrown.chain(ctx, ex, pending); }
         }

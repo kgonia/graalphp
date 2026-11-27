@@ -33,10 +33,15 @@ public final class B1RequestContext {
     private boolean abortDestructors;
     boolean destructorsAborted() { return abortDestructors; }
     private final LinkedHashSet<B1Object> destructibles = new LinkedHashSet<>();
-    private final ArrayDeque<Long> freeObjectIds = new ArrayDeque<>();
+    /** Freed object handles, reused last-freed first (like php-src's objects_store free list). */
+    private long[] freeObjectIds = new long[16];
+    private int freeObjectCount;
     private long nextObjectId = 1;
-    long acquireObjectId() { return freeObjectIds.isEmpty() ? nextObjectId++ : freeObjectIds.pop(); }
-    void releaseObjectId(long id) { freeObjectIds.push(id); }
+    long acquireObjectId() { return freeObjectCount == 0 ? nextObjectId++ : freeObjectIds[--freeObjectCount]; }
+    void releaseObjectId(long id) {
+        if (freeObjectCount == freeObjectIds.length) freeObjectIds = Arrays.copyOf(freeObjectIds, freeObjectCount * 2);
+        freeObjectIds[freeObjectCount++] = id;
+    }
     private B1Frame frame;
     /** The callee about to receive owned arguments (set by a moving caller, cleared by the callee's entry). */
     public B1Callable moved;
@@ -568,14 +573,27 @@ public final class B1RequestContext {
     }
 
     public Object forward(Object value, Object source, Object offsetValue, Object lengthValue,boolean sliced) {
-        if (!sliced && source instanceof B1Array args && args.packed()) {
-            if (value instanceof B1Bytes name) return function(this, name.symbolKey(), name.symbol(this)).callSlice(this, null, args, 0, args.size());
+        // call_user_func_array($f, $args) and call_user_func_array($f, array_slice($args, int, ?int)) over a packed
+        // array: the callee reads its arguments from the array's range; no slice is built and the callable is
+        // resolved once. Everything else (hashed or named arguments, coercions, errors) takes forwardSlow.
+        if (source instanceof B1Array args && args.packed()
+                && (!sliced || offsetValue instanceof Long && (lengthValue == null || lengthValue instanceof Long))) {
+            int start = 0, count = args.size();
+            if (sliced) {
+                start = args.sliceStart((Long) offsetValue);
+                count = args.sliceLength(start, lengthValue == null ? Long.MAX_VALUE : (Long) lengthValue);
+            }
+            if (value instanceof B1Bytes name) return function(this, name.symbolKey(), name.symbol(this)).callSlice(this, null, args, start, count);
             if (value instanceof B1Closure closure) {
                 frame.nextClosure = closure;
-                return closure.body.callSlice(this, closure.self, args, 0, args.size());
+                return closure.body.callSlice(this, closure.self, args, start, count);
             }
-            if (value instanceof B1Array pair && pair.size() == 2 && pair.get(0L) instanceof B1Object obj && pair.get(1L) instanceof B1Bytes name)
-                return resolve(obj, name.symbolKey(), name.toString(), name.symbol(this)).callSlice(this, obj, args, 0, args.size());
+            if (value instanceof B1Array pair && pair.size() == 2 && pair.get(1L) instanceof B1Bytes name) {
+                Object receiver = pair.get(0L);
+                if (receiver instanceof B1Object obj)
+                    return resolve(obj, name.symbolKey(), name.toString(), name.symbol(this)).callSlice(this, obj, args, start, count);
+                if (receiver instanceof B1Bytes) return callable(pair).callSlice(this, null, args, start, count);
+            }
         }
         return forwardSlow(value, source, offsetValue, lengthValue, sliced);
     }
@@ -647,8 +665,11 @@ public final class B1RequestContext {
     }
     public static boolean truth(Object value) {
         if (value instanceof Boolean flag) return flag;
-        if (value == null) return false;
         if (value instanceof Long n) return n != 0;
+        return truthSlow(value);
+    }
+    private static boolean truthSlow(Object value) {
+        if (value == null) return false;
         if (value instanceof B1Bytes text) return text.truth();
         if (value instanceof B1Array a) return a.size() != 0;
         if (value instanceof Double d) return d != 0;
@@ -754,53 +775,59 @@ public final class B1RequestContext {
         return Objects.equals(a,b);
     }
 
+    // Comparison opcodes as static final ints: generated code passes a constant opcode, so once compare/test
+    // inline, C2 folds these if-chains to one compare (a switch over OPERATORS[opcode] loads the array, the enum
+    // and the switch map on every call).
+    private static final int OP_IDENTICAL = pl.codeloom.php.ir.IrUnit.Operator.IDENTICAL.ordinal(),
+            OP_NOT_IDENTICAL = pl.codeloom.php.ir.IrUnit.Operator.NOT_IDENTICAL.ordinal(),
+            OP_EQ = pl.codeloom.php.ir.IrUnit.Operator.EQ.ordinal(), OP_NE = pl.codeloom.php.ir.IrUnit.Operator.NE.ordinal(),
+            OP_LT = pl.codeloom.php.ir.IrUnit.Operator.LT.ordinal(), OP_LE = pl.codeloom.php.ir.IrUnit.Operator.LE.ordinal(),
+            OP_GT = pl.codeloom.php.ir.IrUnit.Operator.GT.ordinal(), OP_GE = pl.codeloom.php.ir.IrUnit.Operator.GE.ordinal();
     public Object compare(Object a, Object b, int opcode) {
         if (a instanceof Long x && b instanceof Long y) {
             long l = x, r = y;
-            return switch (OPERATORS[opcode]) {
-                case IDENTICAL, EQ -> l == r;
-                case NOT_IDENTICAL, NE -> l != r;
-                case LT -> l < r;
-                case LE -> l <= r;
-                case GT -> l > r;
-                case GE -> l >= r;
-                default -> throw new IllegalArgumentException(OPERATORS[opcode].name());
-            };
+            if (opcode == OP_LT) return l < r;
+            if (opcode == OP_LE) return l <= r;
+            if (opcode == OP_GT) return l > r;
+            if (opcode == OP_GE) return l >= r;
+            if (opcode == OP_IDENTICAL || opcode == OP_EQ) return l == r;
+            if (opcode == OP_NOT_IDENTICAL || opcode == OP_NE) return l != r;
+            throw new IllegalArgumentException(OPERATORS[opcode].name());
         }
         return compareSlow(a, b, opcode);
     }
     /** A comparison in a branch condition. */
     public boolean test(Object a, Object b, int opcode) {
-        if (a instanceof Long x && b instanceof Long y) {
-            long l = x, r = y;
-            return switch (OPERATORS[opcode]) {
-                case IDENTICAL, EQ -> l == r;
-                case NOT_IDENTICAL, NE -> l != r;
-                case LT -> l < r;
-                case LE -> l <= r;
-                case GT -> l > r;
-                case GE -> l >= r;
-                default -> throw new IllegalArgumentException(OPERATORS[opcode].name());
-            };
-        }
-        if (a instanceof Double x && b instanceof Double y) {
-            double l = x, r = y;
-            return switch (OPERATORS[opcode]) {
-                case EQ -> l == r;
-                case NE -> l != r;
-                case LT -> l < r;
-                case LE -> l <= r;
-                case GT -> l > r;
-                case GE -> l >= r;
-                default -> truth(compareSlow(a, b, opcode));
-            };
-        }
+        if (a instanceof Long x && b instanceof Long y) return testLongs(x, y, opcode);
+        if (a instanceof Double x && b instanceof Double y && opcode != OP_IDENTICAL && opcode != OP_NOT_IDENTICAL)
+            return testDoubles(x, y, opcode);
         return truth(compareSlow(a, b, opcode));
     }
+    private static boolean testLongs(long l, long r, int opcode) {
+        if (opcode == OP_LT) return l < r;
+        if (opcode == OP_LE) return l <= r;
+        if (opcode == OP_GT) return l > r;
+        if (opcode == OP_GE) return l >= r;
+        if (opcode == OP_IDENTICAL || opcode == OP_EQ) return l == r;
+        if (opcode == OP_NOT_IDENTICAL || opcode == OP_NE) return l != r;
+        throw new IllegalArgumentException(OPERATORS[opcode].name());
+    }
+    private static boolean testDoubles(double l, double r, int opcode) {
+        if (opcode == OP_LT) return l < r;
+        if (opcode == OP_LE) return l <= r;
+        if (opcode == OP_GT) return l > r;
+        if (opcode == OP_GE) return l >= r;
+        if (opcode == OP_EQ) return l == r;
+        if (opcode == OP_NE) return l != r;
+        throw new IllegalArgumentException(OPERATORS[opcode].name());
+    }
     public static boolean identicalTest(Object a, Object b) {
+        if (a instanceof Long x) return b instanceof Long y && x.longValue() == y.longValue();
+        return identicalTestSlow(a, b);
+    }
+    private static boolean identicalTestSlow(Object a, Object b) {
         if (a == b) return !(a instanceof Double d && d.isNaN());
         if (a == null || b == null) return false;
-        if (a instanceof Long x) return b instanceof Long y && x.longValue() == y.longValue();
         return identical(a, b);
     }
     /** === and !== */
@@ -1221,6 +1248,23 @@ public final class B1RequestContext {
         final Property[] declarations;
         final int[] visibility;
         final HashMap<String,Integer> index = new HashMap<>();
+        /** The initial slots of a new instance when every declared property is untyped, initialized and holds an
+         * uncounted value (scalar or frozen literal array): a new object then clones them. Null otherwise. */
+        final Object[] plainDefaults;
+        private static Object[] plainDefaults(Property[] declarations) {
+            Object[] values = new Object[declarations.length];
+            for (int i = 0; i < declarations.length; i++) {
+                Property p = declarations[i];
+                if (p == null || p.type() != null || !p.initialized()) return null;
+                Object v = p.initial();
+                if (!(v == null || v instanceof Long || v instanceof B1Bytes || v instanceof Boolean || v instanceof Double
+                        || v instanceof B1Array a && a.frozen())) return null;
+                values[i] = v;
+            }
+            return values;
+        }
+        /** No two declared slots share a name (get_object_vars can skip the key lookups). */
+        final boolean distinctNames;
         /** Declared slot by property-name symbol: 0 unknown, 1 not declared, slot + 2. */
         private volatile int[] slotTable = new int[0];
         int slotAt(String name, int symbol) {
@@ -1251,6 +1295,8 @@ public final class B1RequestContext {
                 visibility[i] = visibilities.getOrDefault(name, 1);
                 index.put(name, i);
             }
+            distinctNames = index.size() == n;
+            plainDefaults = plainDefaults(declarations);
             byteSlots = new int[Math.max(4, Integer.highestOneBit(Math.max(1, n) * 2) * 2)];
             for (int i = 0; i < n; i++) {
                 int mask = byteSlots.length - 1, s = keys[i].hashCode() & mask;
@@ -1319,13 +1365,20 @@ public final class B1RequestContext {
     void forget(B1Object obj) { destructibles.remove(obj); }
     public int liveDestructibleCount() { return destructibles.size(); }
 
+    /** Fast frames outside fibers are strictly nested: the request reuses one frame per depth (grown on demand,
+     * bounded by the deepest fast call stack of this request). */
+    private B1Frame[] fastFrames = new B1Frame[32];
+    private int fastDepth;
     /** A fast frame: CVs and temporaries live in the generated method. */
     public B1Frame enterFast(B1Callable fn, String file, String name) {
-        B1Frame f = new B1Frame(frame, file, name, fn.locals, -1, false, false);
-        f.strictTypes = fn.strictTypes;
-        f.staticCall = fn.isStatic;
-        f.scope = fn.scope;
+        B1Frame[] pool = fastFrames;
+        int depth = fastDepth;
+        if (depth == pool.length) pool = fastFrames = java.util.Arrays.copyOf(pool, depth * 2);
+        B1Frame f = pool[depth];
+        if (f == null) f = pool[depth] = B1Frame.pooled();
+        fastDepth = depth + 1;
         B1Frame caller = frame;
+        f.reenter(caller, file, name, fn);
         if (caller != null) {
             f.closure = caller.nextClosure;
             caller.nextClosure = null;
@@ -1350,6 +1403,11 @@ public final class B1RequestContext {
     void pop(B1Frame f) {
         if (frame != f) throw new IllegalStateException("unbalanced PHP frame");
         frame = f.caller;
+    }
+    /** The fast frame finished leaving (after its CVs were destructed): its pool slot is free again. */
+    void release(B1Frame f) {
+        if (fastFrames[--fastDepth] != f) throw new IllegalStateException("unbalanced fast PHP frame");
+        f.retire();
     }
     long globalVersion;
     B1Ref bindGlobal(String name,B1Ref slot) { globalVersion++; return globals.put(name,slot); }
@@ -1701,7 +1759,7 @@ public final class B1RequestContext {
         for (var worker : fiberThreads) worker.join();
         idleFibers.clear();
         fiberThreads.clear();
-        if (frame != null || liveDestructibleCount() != 0) throw new IllegalStateException("incomplete PHP shutdown");
+        if (frame != null || fastDepth != 0 || liveDestructibleCount() != 0) throw new IllegalStateException("incomplete PHP shutdown");
         B1Thrown.propagate(pending);
     }
 }

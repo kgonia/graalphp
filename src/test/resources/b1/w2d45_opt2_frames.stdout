@@ -1,0 +1,49 @@
+#0 /fixtures/w2d45_opt2_frames.php(6): thrower(7)
+#1 /fixtures/w2d45_opt2_frames.php(7): middle(5, 'e1', 'e2')
+#2 /fixtures/w2d45_opt2_frames.php(8): outer(5)
+#3 {main}
+array(1) {
+  [0]=>
+  int(1)
+}
+array(4) {
+  [0]=>
+  int(1)
+  [1]=>
+  int(2)
+  [2]=>
+  int(3)
+  [3]=>
+  int(4)
+}
+destruct local3: [local3]:local3,x
+30
+destruct extra1: [extra1]:extra1,x
+array(3) {
+  [0]=>
+  int(1)
+  [1]=>
+  object(Noisy)#1 (1) {
+    ["name"]=>
+    string(6) "passed"
+  }
+  [2]=>
+  string(4) "tail"
+}
+destruct passed: [passed]:passed,x
+71
+4
+array(3) {
+  [0]=>
+  string(1) "v"
+  [1]=>
+  int(1)
+  [2]=>
+  int(2)
+}
+s(a,b)
+m(b)
+s(c,B)
+bc
+c
+610

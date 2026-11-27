@@ -29,7 +29,9 @@ public non-sealed class B1Object implements B1GcNode {
         this.definition = definition;
         layout = definition.sites();
         int n = layout.names.length;
-        slots = n == 0 ? NO_SLOTS : new Object[n];
+        Object[] plain = layout.plainDefaults;
+        if (plain != null) { slots = n == 0 ? NO_SLOTS : plain.clone(); return; }
+        slots = new Object[n];
         for (int i = 0; i < n; i++) {
             var prop = layout.declarations[i];
             if (prop != null && prop.type() == null && prop.initialized()) slots[i] = retain(prop.initial());
@@ -182,6 +184,9 @@ public non-sealed class B1Object implements B1GcNode {
         addDynamic(name, key, count ? retain(value) : value);
     }
     B1Array publicProperties(B1RequestContext ctx) {
+        // Declared names of one layout are distinct, and so are dynamic names; distinct names are distinct
+        // array keys. A mix of both builds the indexed array, which merges like PHP's hash would.
+        if (slots.length == 0 || dynCount == 0 && layout.distinctNames) return distinctProperties(ctx);
         B1Array result = B1Array.hashed(slots.length + dynCount);
         boolean inScope = type.equals(ctx.scope());
         for (int i = 0; i < slots.length; i++) {
@@ -194,6 +199,22 @@ public non-sealed class B1Object implements B1GcNode {
             Object v = dynValues[i];
             if (v instanceof B1Ref ref) { if (!ref.defined()) continue; v = ref.get(); }
             result.put(ctx,dynamicKey(i),v);
+        }
+        return result;
+    }
+    private B1Array distinctProperties(B1RequestContext ctx) {
+        B1Array result = B1Array.unindexed(slots.length + dynCount);
+        boolean inScope = type.equals(ctx.scope());
+        for (int i = 0; i < slots.length; i++) {
+            Object v = slots[i];
+            if (v instanceof B1Ref ref) { if (!ref.defined()) continue; v = ref.get(); }
+            if (layout.visibility[i] != 1 && !inScope) continue;
+            result.appendDistinct(layout.keys[i].arrayKey(), v);
+        }
+        for (int i = 0; i < dynCount; i++) {
+            Object v = dynValues[i];
+            if (v instanceof B1Ref ref) { if (!ref.defined()) continue; v = ref.get(); }
+            result.appendDistinct(dynamicKey(i).arrayKey(), v);
         }
         return result;
     }
@@ -288,15 +309,14 @@ public non-sealed class B1Object implements B1GcNode {
 
     /** Scalars (null, int, string, bool, float) are not counted: one type test exits for the common ones. */
     public static Object retain(Object value) {
-        if (value instanceof B1Array a) { a.retain(); return value; }
-        if (value == null || value instanceof Long || value instanceof B1Bytes) return value;
-        return retainSlow(value);
+        if (value != null && !(value instanceof Long) && !(value instanceof B1Bytes)) retainCounted(value);
+        return value;
     }
-    private static Object retainSlow(Object value) {
-        if (value instanceof B1Object obj) obj.count++;
+    private static void retainCounted(Object value) {
+        if (value instanceof B1Array a) a.retain();
+        else if (value instanceof B1Object obj) obj.count++;
         else if (value instanceof B1Ref ref) ref.bind();
         else if (value instanceof B1Closure c) c.retain();
-        return value;
     }
 
     public static void release(B1RequestContext ctx, Object value) {
@@ -340,7 +360,21 @@ public non-sealed class B1Object implements B1GcNode {
         for (Object v : slots) visit.accept(v);
         for (int i = 0; i < dynCount; i++) visit.accept(dynValues[i]);
     }
+    /** A value whose release and detach do nothing. */
+    private static boolean uncounted(Object v) {
+        return v == null || v instanceof Long || v instanceof B1Bytes || v instanceof Boolean || v instanceof Double;
+    }
     void clear(B1RequestContext ctx) {
+        boolean plain = true;
+        for (int i = 0; plain && i < slots.length; i++) plain = uncounted(slots[i]);
+        for (int i = 0; plain && i < dynCount; i++) plain = uncounted(dynValues[i]);
+        if (plain) {
+            java.util.Arrays.fill(slots, null);
+            if (dynCount != 0) java.util.Arrays.fill(dynValues, 0, dynCount, null);
+            dynCount = 0;
+            dynIndex = null;
+            return;
+        }
         var values = new java.util.ArrayList<Object>(slots.length + dynCount);
         for (int i = 0; i < slots.length; i++) { values.add(slots[i]); slots[i] = null; }
         for (int i = 0; i < dynCount; i++) { values.add(dynValues[i]); dynValues[i] = null; }

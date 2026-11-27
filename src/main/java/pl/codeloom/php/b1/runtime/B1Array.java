@@ -3,7 +3,9 @@ package pl.codeloom.php.b1.runtime;
 import java.util.Arrays;
 
 /** An insertion-ordered PHP array. Packed arrays (keys 0..size-1 in order) store neither keys nor hash slots;
- * hashed arrays index their dense entry list with an open-addressing table of entry positions. */
+ * hashed arrays index their dense entry list with an open-addressing table of entry positions. A hashed array
+ * built from keys known to be distinct (get_object_vars) starts unindexed (keys, no hashes or table): a foreach
+ * reads it by position, and the first lookup or structural change builds the index. */
 public final class B1Array implements B1GcNode {
     static final String OCCUPIED = "Cannot add element to the array as the next element is already occupied";
     /** What {@link #getOrMissing} returns for an absent key; a present key can hold null. */
@@ -12,9 +14,10 @@ public final class B1Array implements B1GcNode {
     private Object[] values;
     /** Canonical keys (Long or B1Bytes) of hashed arrays, null while packed. */
     private Object[] keys;
-    /** The entries' key hashes, parallel to keys. */
+    /** The entries' key hashes, parallel to keys; null while packed or unindexed. */
     private int[] hashes;
-    /** Linear-probing slots holding entry position + 1; 0 is empty. Power-of-two length. */
+    /** Linear-probing slots holding entry position + 1; 0 is empty. Power-of-two length. Null while packed or
+     * unindexed (keys != null). */
     private int[] table;
     private int size;
     private long next;
@@ -27,7 +30,7 @@ public final class B1Array implements B1GcNode {
 
     /** Condy roots and their children have process lifetime and can be read by concurrent requests. */
     public B1Array freeze() {
-        if (frozen || size == 0) { frozen = true; return this; }
+        if (frozen || size == 0) { settle(); frozen = true; return this; }
         // Validate the literal graph before changing any of its arrays. Snapshots of live data
         // use snapshot() instead, so the source request keeps ordinary writable arrays.
         var graph = new java.util.LinkedHashSet<B1Array>();
@@ -41,8 +44,15 @@ public final class B1Array implements B1GcNode {
                 else B1Snapshot.requireScalar(array.values[i]);
             }
         }
-        for (var array : graph) array.frozen = true;
+        for (var array : graph) { array.settle(); array.frozen = true; }
         return this;
+    }
+    /** Before an array is frozen: a frozen array is read by concurrent requests and never changes again, so it
+     * must not still build its index lazily (an empty unindexed array becomes an empty packed one). */
+    private void settle() {
+        if (keys == null || table != null) return;
+        if (size == 0) keys = null;
+        else index();
     }
 
     public B1Array(int capacity) { values = capacity == 0 ? EMPTY : new Object[capacity]; }
@@ -54,6 +64,32 @@ public final class B1Array implements B1GcNode {
         array.table = new int[tableSize(array.values.length)];
         return array;
     }
+    /** An empty unindexed array for {@code capacity} distinct canonical keys added with {@link #appendDistinct}. */
+    static B1Array unindexed(int capacity) {
+        B1Array array = new B1Array(Math.max(capacity, 1));
+        array.keys = new Object[array.values.length];
+        return array;
+    }
+    /** Adds an entry whose canonical key no entry has (the caller guarantees it); the array stays unindexed. */
+    void appendDistinct(Object canonical, Object value) {
+        if (table != null || keys == null) throw new IllegalStateException("appendDistinct on an indexed array");
+        grow();
+        keys[size] = canonical;
+        values[size] = B1Object.retain(value);
+        if (canonical instanceof Long n && (!hasIntegerKey || n >= next)) {
+            next = n == Long.MAX_VALUE ? n : n + 1;
+            hasIntegerKey = true;
+        }
+        size++;
+    }
+    /** Builds the hashes and the table of an unindexed array. */
+    private void index() {
+        if (frozen) throw new IllegalStateException("index of frozen array");
+        hashes = new int[keys.length];
+        for (int i = 0; i < size; i++) hashes[i] = hash(keys[i]);
+        rehash(values.length);
+    }
+    private void indexIfNeeded() { if (keys != null && table == null) index(); }
     public int size() { return size; }
     public Object keyAt(int i) { return keys == null ? (Long)(long)i : keys[i]; }
     public Object valueAt(int i) { Object v = values[i]; return v instanceof B1Ref ref ? ref.get() : v; }
@@ -83,7 +119,10 @@ public final class B1Array implements B1GcNode {
     /** The entry position of a canonical key, or -1. */
     private int position(Object key) {
         if (key instanceof Long n) return position(n.longValue());
-        if (table == null) return -1;
+        if (table == null) {
+            if (keys == null) return -1;
+            index();
+        }
         int h = hash(key), mask = table.length - 1;
         for (int s = h & mask;; s = (s + 1) & mask) {
             int e = table[s];
@@ -93,7 +132,10 @@ public final class B1Array implements B1GcNode {
         }
     }
     private int position(long k) {
-        if (table == null) return keys == null && k >= 0 && k < size ? (int)k : -1;
+        if (table == null) {
+            if (keys == null) return k >= 0 && k < size ? (int)k : -1;
+            index();
+        }
         int h = hash(k), mask = table.length - 1;
         for (int s = h & mask;; s = (s + 1) & mask) {
             int e = table[s];
@@ -141,8 +183,10 @@ public final class B1Array implements B1GcNode {
         values = Arrays.copyOf(values, capacity);
         if (keys != null) {
             keys = Arrays.copyOf(keys, capacity);
-            hashes = Arrays.copyOf(hashes, capacity);
-            if (table.length < capacity * 2) rehash(capacity);
+            if (table != null) {
+                hashes = Arrays.copyOf(hashes, capacity);
+                if (table.length < capacity * 2) rehash(capacity);
+            }
         }
     }
     private static int tableSize(int capacity) {
@@ -206,6 +250,7 @@ public final class B1Array implements B1GcNode {
         long n = integer ? (Long)canonical : 0;
         if (keys == null && !(integer && n == size)) hashed();
         if (keys != null) {
+            if (table == null) index();
             keys[size] = canonical;
             hashes[size] = hash(canonical);
             link(size);
@@ -269,6 +314,7 @@ public final class B1Array implements B1GcNode {
         B1Array copy = copyShape();
         copies.put(this,copy);
         for (int i = 0; i < size; i++) copy.values[i] = B1Snapshot.pure(values[i],copies);
+        copy.settle();
         copy.frozen = true;
         return copy;
     }
@@ -285,6 +331,7 @@ public final class B1Array implements B1GcNode {
             copy.values[i] = value;
         }
         path.remove(this);
+        copy.settle();
         copy.frozen = true;
         return copy;
     }
@@ -302,7 +349,8 @@ public final class B1Array implements B1GcNode {
         copy.next = next;
         copy.cursor = cursor;
         copy.hasIntegerKey = hasIntegerKey;
-        if (keys != null) {
+        if (keys != null && table == null) copy.keys = Arrays.copyOf(keys, size);
+        else if (keys != null) {
             copy.keys = Arrays.copyOf(keys, size);
             copy.hashes = Arrays.copyOf(hashes, size);
             if (table.length >= tableSize(size)) copy.table = table.clone();
@@ -341,6 +389,7 @@ public final class B1Array implements B1GcNode {
     }
     void sortKeys(B1RequestContext ctx,Object flags) {
         if (keys == null) { cursor = 0; return; }
+        indexIfNeeded();
         Integer[] order = new Integer[size];
         for (int i = 0; i < size; i++) order[i] = i;
         Object[] current = keys;
@@ -363,6 +412,7 @@ public final class B1Array implements B1GcNode {
         if (pos >= 0) removeAt(ctx, pos);
     }
     private void removeAt(B1RequestContext ctx, int pos) {
+        if (keys != null && table == null) { removeUnindexed(ctx, pos); return; }
         Object old = values[pos];
         int last = size - 1;
         if (keys == null) {
@@ -391,6 +441,16 @@ public final class B1Array implements B1GcNode {
         size = last;
         B1Object.release(ctx,old);
     }
+    /** An unindexed array has no slots to unlink: the remaining keys stay distinct, so it stays unindexed. */
+    private void removeUnindexed(B1RequestContext ctx, int pos) {
+        Object old = values[pos];
+        int last = size - 1;
+        System.arraycopy(keys,pos+1,keys,pos,last - pos);
+        System.arraycopy(values,pos+1,values,pos,last - pos);
+        keys[last] = values[last] = null;
+        size = last;
+        B1Object.release(ctx,old);
+    }
     /** Backward-shift deletion of the last entry's slot. */
     private void unlinkTail() {
         int mask = table.length - 1, target = size;
@@ -408,6 +468,7 @@ public final class B1Array implements B1GcNode {
     /** array_unshift on a uniquely owned array: prepends in place and renumbers the integer keys from 0. */
     long unshift(B1RequestContext ctx, Object value) {
         if (!unique()) throw new IllegalStateException("unshift of a shared array");
+        indexIfNeeded();
         if (keys == null) {
             grow();
             System.arraycopy(values,0,values,1,size);

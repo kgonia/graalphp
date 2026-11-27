@@ -128,6 +128,8 @@ public final class B1Fiber extends B1Object {
     @Override public void gcEdges(Consumer<Object> visit) {
         super.gcEdges(visit);
         visit.accept(callback); visit.accept(result); visit.accept(value);
-        for (B1Frame f = parked; f != null; f = f.caller) f.gcEdges(visit);
+        // A fiber's own frames are never fast; the first fast frame belongs to the stack that resumed it last
+        // (pooled, possibly reused since).
+        for (B1Frame f = parked; f != null && !f.fast; f = f.caller) f.gcEdges(visit);
     }
 }

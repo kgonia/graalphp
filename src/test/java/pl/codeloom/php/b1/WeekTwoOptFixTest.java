@@ -29,7 +29,9 @@ class WeekTwoOptFixTest {
             "w2d45_opt_assign,false", "w2d45_opt_assign,true",      // P0-3 assign TypeError, P0-5, P0-6 $o->$k
             "w2d45_opt_fiber,false", "w2d45_opt_fiber,true",        // P1-7 fast frames parked in a fiber
             "w2d45_opt_keys,false", "w2d45_opt_keys,true",          // P1-9 float keys, P2-10 named defaults
-            "w2d45_opt_named,false", "w2d45_opt_named,true"})       // re-review: $o->$k operands, chained builtin throws
+            "w2d45_opt_named,false", "w2d45_opt_named,true",        // re-review: $o->$k operands, chained builtin throws
+            "w2d45_opt2_frames,false", "w2d45_opt2_frames,true",    // Pass 2: reused fast frames, sliced forwards
+            "w2d45_opt2_objvars,false", "w2d45_opt2_objvars,true"}) // Pass 2: unindexed get_object_vars, defaults
     void matchesPhp(String fixture, boolean frames) throws Exception {
         String previous = System.getProperty("b1.slow");
         if (frames) System.setProperty("b1.slow", "true"); else System.clearProperty("b1.slow");
